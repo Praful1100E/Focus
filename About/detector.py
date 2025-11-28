@@ -1,5 +1,9 @@
 import pickle
 import re
+import json
+import csv
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import nltk
@@ -75,6 +79,98 @@ class PhishingDetector:
 
         return result
 
+    def analyze_emails_batch(self, email_texts):
+        """
+        Analyze multiple emails at once and return results for each.
+
+        Args:
+            email_texts (list): List of email text strings to analyze
+
+        Returns:
+            list: List of analysis results, one for each email
+        """
+        results = []
+        for email_text in email_texts:
+            result = self.analyze_email(email_text)
+            results.append(result)
+        return results
+
+    def export_single_result(self, result, format_type='json', filename=None):
+        """
+        Export a single analysis result to CSV or JSON format.
+
+        Args:
+            result (dict): Analysis result from analyze_email
+            format_type (str): 'json' or 'csv'
+            filename (str): Optional custom filename
+
+        Returns:
+            str: Path to the exported file
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"phishing_analysis_single_{timestamp}"
+
+        if format_type.lower() == 'json':
+            filepath = f"{filename}.json"
+            with open(filepath, 'w') as f:
+                json.dump(result, f, indent=2)
+        elif format_type.lower() == 'csv':
+            filepath = f"{filename}.csv"
+            with open(filepath, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['is_phishing', 'risk_score', 'confidence', 'patterns_detected'])
+                patterns_str = '; '.join(result['patterns_detected'])
+                writer.writerow([
+                    result['is_phishing'],
+                    result['risk_score'],
+                    result['confidence'],
+                    patterns_str
+                ])
+        else:
+            raise ValueError("format_type must be 'json' or 'csv'")
+
+        return filepath
+
+    def export_batch_results(self, results, format_type='json', filename=None):
+        """
+        Export batch analysis results to CSV or JSON format.
+
+        Args:
+            results (list): List of analysis results from analyze_emails_batch
+            format_type (str): 'json' or 'csv'
+            filename (str): Optional custom filename
+
+        Returns:
+            str: Path to the exported file
+        """
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"phishing_analysis_batch_{timestamp}"
+
+        if format_type.lower() == 'json':
+            filepath = f"{filename}.json"
+            with open(filepath, 'w') as f:
+                json.dump(results, f, indent=2)
+        elif format_type.lower() == 'csv':
+            filepath = f"{filename}.csv"
+            with open(filepath, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['email_index', 'is_phishing', 'risk_score', 'confidence', 'patterns_detected'])
+                for i, result in enumerate(results):
+                    patterns_str = '; '.join(result['patterns_detected'])
+                    writer.writerow([
+                        i + 1,
+                        result['is_phishing'],
+                        result['risk_score'],
+                        result['confidence'],
+                        patterns_str
+                    ])
+        else:
+            raise ValueError("format_type must be 'json' or 'csv'")
+
+        return filepath
+
     def detect_patterns(self, email_text):
         patterns = []
 
@@ -95,6 +191,75 @@ class PhishingDetector:
             patterns.append('Potential fake login/verification link')
 
         return patterns
+
+    def analyze_email_headers(self, headers_raw):
+        """
+        Analyze email headers for suspicious patterns.
+
+        Args:
+            headers_raw (str): Raw email headers as a string
+
+        Returns:
+            dict: Header analysis results
+        """
+        header_patterns = []
+        header_info = {}
+
+        # Parse headers into key-value pairs
+        headers = {}
+        for line in headers_raw.split('\n'):
+            if ':' in line:
+                key, value = line.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+
+        # Extract key header information
+        header_info['from'] = headers.get('from', '')
+        header_info['to'] = headers.get('to', '')
+        header_info['subject'] = headers.get('subject', '')
+        header_info['date'] = headers.get('date', '')
+        header_info['received'] = headers.get('received', '')
+        header_info['user_agent'] = headers.get('user-agent', '')
+        header_info['content_type'] = headers.get('content-type', '')
+
+        # Check for spoofed sender (From vs Return-Path mismatch)
+        return_path = headers.get('return-path', '')
+        if return_path and header_info['from']:
+            from_domain = re.search(r'@([\w.-]+)', header_info['from'])
+            return_domain = re.search(r'@([\w.-]+)', return_path)
+            if from_domain and return_domain and from_domain.group(1) != return_domain.group(1):
+                header_patterns.append('Sender address mismatch (possible spoofing)')
+
+        # Check for suspicious User-Agent
+        if header_info['user_agent']:
+            suspicious_uas = ['phishing', 'spam', 'bot', 'crawler']
+            if any(ua.lower() in header_info['user_agent'].lower() for ua in suspicious_uas):
+                header_patterns.append('Suspicious User-Agent detected')
+
+        # Check for unusual routing (too many Received headers)
+        received_count = len([h for h in headers_raw.split('\n') if h.lower().startswith('received:')])
+        if received_count > 5:
+            header_patterns.append('Unusual email routing (too many hops)')
+
+        # Check for forged timestamps (date too far in future/past)
+        if header_info['date']:
+            try:
+                email_date = parsedate_to_datetime(header_info['date'])
+                now = datetime.now(email_date.tzinfo)
+                time_diff = abs((now - email_date).total_seconds())
+                if time_diff > 86400 * 30:  # More than 30 days difference
+                    header_patterns.append('Suspicious timestamp (date too far from current time)')
+            except:
+                header_patterns.append('Invalid or malformed date header')
+
+        # Check for missing or suspicious Content-Type
+        if not header_info['content_type'] or 'multipart/mixed' in header_info['content_type'].lower():
+            if 'attachment' in headers_raw.lower():
+                header_patterns.append('Potential executable attachment detected')
+
+        return {
+            'header_info': header_info,
+            'header_patterns': header_patterns
+        }
 
 if __name__ == "__main__":
     # Example usage

@@ -9,6 +9,9 @@ This project implements an AI-powered phishing email detector using Python, Natu
 - **Risk Scoring**: Provides a risk score from 0-100 indicating the likelihood of the email being phishing
 - **Machine Learning Model**: Uses Logistic Regression trained on email datasets
 - **Confidence Levels**: Categorizes results as Low, Medium, or High confidence
+- **Batch Processing**: Analyze multiple emails at once for efficient processing of large volumes
+- **Web Interface**: User-friendly web interface for easy email analysis
+- **REST API**: Programmatic access via REST API endpoints for integration
 
 ## Tech Stack
 - Python 3.x
