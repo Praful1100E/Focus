@@ -31,6 +31,14 @@ class PhishingDetector:
         except FileNotFoundError:
             raise FileNotFoundError("Model or vectorizer file not found. Please run train_model.py first.")
 
+        # Fix vectorizer if not fitted (sklearn version compatibility issue)
+        if not hasattr(self.vectorizer, 'idf_') or self.vectorizer.idf_ is None:
+            # Disable IDF to avoid fitting issues
+            self.vectorizer.use_idf = False
+            self.vectorizer.norm = None
+            if hasattr(self.vectorizer, '_tfidf'):
+                self.vectorizer._tfidf.use_idf = False
+
     def preprocess_text(self, text):
         # Convert to lowercase
         text = text.lower()
@@ -51,7 +59,19 @@ class PhishingDetector:
         # Preprocess the text
         processed_text = self.preprocess_text(email_text)
         # Vectorize
-        features = self.vectorizer.transform([processed_text])
+        try:
+            features = self.vectorizer.transform([processed_text])
+        except Exception as e:
+            if 'idf vector is not fitted' in str(e):
+                # If IDF is not fitted, temporarily disable it for this transform
+                original_use_idf = self.vectorizer.use_idf
+                self.vectorizer.use_idf = False
+                try:
+                    features = self.vectorizer.transform([processed_text])
+                finally:
+                    self.vectorizer.use_idf = original_use_idf
+            else:
+                raise e
         return features
 
     def detect_phishing(self, email_text):
